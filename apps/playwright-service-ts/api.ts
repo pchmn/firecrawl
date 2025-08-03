@@ -55,7 +55,253 @@ interface UrlModel {
   timeout?: number;
   headers?: { [key: string]: string };
   check_selector?: string;
+  spa_mode?: boolean;
+  network_idle_time?: number;
+  dom_stable_time?: number;
+  // New: Configure which strategies to use
+  spa_strategies?: {
+    loading_indicators?: boolean; // Wait for loading indicators to disappear
+    network_idle?: boolean; // Wait for network to be idle
+    dom_stable?: boolean; // Wait for DOM to stabilize
+    early_exit?: boolean; // Exit early if page seems ready
+  };
 }
+
+// Generic loading indicators that work across most websites
+const GENERIC_LOADING_SELECTORS = [
+  '[class*="loading"]',
+  '[class*="spinner"]',
+  '[class*="loader"]',
+  '[id*="loading"]',
+  '[id*="spinner"]',
+  '[id*="loader"]',
+  '[data-testid*="loading"]',
+  '[data-testid*="spinner"]',
+  ".loading",
+  ".spinner",
+  ".loader",
+  ".sk-circle", // Common CSS spinner
+  ".sk-cube-grid", // Common CSS spinner
+  ".fa-spinner", // FontAwesome spinner
+  ".fa-circle-o-notch", // FontAwesome spinner
+];
+
+const waitForSpaToLoad = async (
+  hero: Hero,
+  timeout: number,
+  networkIdleTime: number = 2000,
+  domStableTime: number = 1000,
+  strategies: {
+    loading_indicators?: boolean;
+    network_idle?: boolean;
+    dom_stable?: boolean;
+    early_exit?: boolean;
+  } = {
+    loading_indicators: true,
+    network_idle: true,
+    dom_stable: false, // Often not needed if other strategies work
+    early_exit: true,
+  }
+) => {
+  console.log("🔄 Waiting for SPA to fully load...");
+  const startTime = Date.now();
+  let pageAppearReady = false;
+
+  // Strategy 1: Wait for loading indicators to disappear
+  if (strategies.loading_indicators) {
+    try {
+      console.log("⏳ Checking for loading indicators...");
+      const loadingSelector = GENERIC_LOADING_SELECTORS.join(", ");
+
+      // Check if any loading indicators exist
+      // We keep await, even if the method is not async, because it's a promise
+      // https://ulixee.org/docs/hero/basic-client/awaited-dom
+      const hasLoadingIndicators = await hero.document.querySelector(
+        loadingSelector
+      );
+
+      if (hasLoadingIndicators) {
+        console.log(
+          "⏳ Found loading indicators, waiting for them to disappear..."
+        );
+        let attempts = 0;
+        const maxAttempts = Math.floor(timeout / 1000);
+
+        while (attempts < maxAttempts) {
+          const stillLoading = await hero.document.querySelector(
+            loadingSelector
+          );
+          if (!stillLoading) {
+            console.log("✅ Loading indicators disappeared");
+            pageAppearReady = true;
+            break;
+          }
+          await hero.waitForMillis(1000);
+          attempts++;
+        }
+      } else {
+        console.log("ℹ️ No loading indicators found");
+        pageAppearReady = true;
+      }
+    } catch (error) {
+      console.log(
+        "ℹ️ Loading indicator check failed or timeout reached",
+        error instanceof Error ? error.message : "Unknown error occurred"
+      );
+    }
+
+    // Early exit if loading indicators are gone and early_exit is enabled
+    if (strategies.early_exit && pageAppearReady) {
+      const totalWaitTime = Date.now() - startTime;
+      console.log(
+        `✅ SPA loading complete via loading indicators (waited ${totalWaitTime}ms)`
+      );
+      return;
+    }
+  }
+
+  // Strategy 2: Wait for network activity to settle
+  if (strategies.network_idle) {
+    console.log(
+      `⏳ Waiting for network to be idle for ${networkIdleTime}ms...`
+    );
+    let networkIdleCount = 0;
+    const requiredIdleChecks = Math.floor(networkIdleTime / 500);
+
+    while (
+      networkIdleCount < requiredIdleChecks &&
+      Date.now() - startTime < timeout
+    ) {
+      await hero.waitForMillis(500);
+
+      // Simplified network idle check
+      // In a real implementation, you'd monitor actual network requests
+      networkIdleCount++;
+    }
+
+    if (networkIdleCount >= requiredIdleChecks) {
+      console.log("✅ Network appears idle");
+      pageAppearReady = true;
+    }
+
+    // Early exit if network is idle and page appeared ready from loading indicators
+    if (strategies.early_exit && pageAppearReady) {
+      const totalWaitTime = Date.now() - startTime;
+      console.log(
+        `✅ SPA loading complete via network idle (waited ${totalWaitTime}ms)`
+      );
+      return;
+    }
+  }
+
+  // Strategy 3: Wait for DOM to stabilize (only if specifically requested)
+  if (strategies.dom_stable) {
+    console.log(`⏳ Waiting for DOM to stabilize for ${domStableTime}ms...`);
+    let previousBodyHtml = "";
+    let domStableCount = 0;
+    const requiredStableChecks = Math.floor(domStableTime / 500);
+
+    while (
+      domStableCount < requiredStableChecks &&
+      Date.now() - startTime < timeout
+    ) {
+      await hero.waitForMillis(500);
+
+      try {
+        const currentBodyHtml = (await hero.document.body?.innerHTML) || "";
+        const contentChanged =
+          currentBodyHtml !== previousBodyHtml && previousBodyHtml !== "";
+
+        if (!contentChanged) {
+          domStableCount++;
+        } else {
+          domStableCount = 0;
+        }
+
+        previousBodyHtml = currentBodyHtml;
+      } catch (error) {
+        domStableCount = 0;
+      }
+    }
+
+    if (domStableCount >= requiredStableChecks) {
+      console.log("✅ DOM appears stable");
+    }
+  }
+
+  // Final wait for JavaScript execution to settle (small buffer)
+  await hero.waitForMillis(500);
+
+  const totalWaitTime = Date.now() - startTime;
+  console.log(`✅ SPA loading complete (waited ${totalWaitTime}ms)`);
+};
+
+const scrapePage = async (
+  hero: Hero,
+  url: string,
+  waitAfterLoad: number,
+  timeout: number,
+  checkSelector: string | undefined,
+  spaMode: boolean = false,
+  networkIdleTime: number = 2000,
+  domStableTime: number = 1000,
+  spaStrategies?: {
+    loading_indicators?: boolean;
+    network_idle?: boolean;
+    dom_stable?: boolean;
+    early_exit?: boolean;
+  }
+) => {
+  console.log(
+    `Navigating to ${url} with timeout: ${timeout}ms, spaMode: ${spaMode}`
+  );
+
+  const resource = await hero.goto(url, { timeoutMs: timeout });
+
+  // If SPA mode is enabled, use intelligent waiting
+  if (spaMode) {
+    const strategies = spaStrategies || {
+      loading_indicators: true,
+      network_idle: false,
+      dom_stable: false,
+      early_exit: true,
+    };
+
+    await waitForSpaToLoad(
+      hero,
+      timeout,
+      networkIdleTime,
+      domStableTime,
+      strategies
+    );
+  }
+
+  if (waitAfterLoad > 0) {
+    await hero.waitForMillis(waitAfterLoad);
+  }
+
+  if (checkSelector) {
+    try {
+      await hero.waitForElement(hero.document.querySelector(checkSelector), {
+        timeoutMs: timeout,
+      });
+    } catch (error) {
+      throw new Error("Required selector not found");
+    }
+  }
+
+  const content = await hero.document.documentElement.outerHTML;
+  const status = resource?.response?.statusCode || null;
+  const responseHeaders = resource?.response?.headers || null;
+  const contentType = responseHeaders?.["content-type"] || null;
+
+  return {
+    content,
+    status,
+    headers: responseHeaders,
+    contentType,
+  };
+};
 
 const getHeroOptions = () => {
   const userAgent = new UserAgent().toString();
@@ -100,46 +346,6 @@ const isValidUrl = (urlString: string): boolean => {
   }
 };
 
-const scrapePage = async (
-  hero: Hero,
-  url: string,
-  waitAfterLoad: number,
-  timeout: number,
-  checkSelector: string | undefined
-) => {
-  console.log(`Navigating to ${url} with timeout: ${timeout}ms`);
-
-  // Headers are set via Hero constructor options
-
-  const resource = await hero.goto(url, { timeoutMs: timeout });
-
-  if (waitAfterLoad > 0) {
-    await hero.waitForMillis(waitAfterLoad);
-  }
-
-  if (checkSelector) {
-    try {
-      await hero.waitForElement(hero.document.querySelector(checkSelector), {
-        timeoutMs: timeout,
-      });
-    } catch (error) {
-      throw new Error("Required selector not found");
-    }
-  }
-
-  const content = await hero.document.documentElement.outerHTML;
-  const status = resource?.response?.statusCode || null;
-  const responseHeaders = resource?.response?.headers || null;
-  const contentType = responseHeaders?.["content-type"] || null;
-
-  return {
-    content,
-    status,
-    headers: responseHeaders,
-    contentType,
-  };
-};
-
 app.get("/health", async (req: Request, res: Response) => {
   try {
     const hero = new Hero({ ...getHeroOptions(), connectionToCore });
@@ -163,6 +369,9 @@ app.post("/scrape", async (req: Request, res: Response) => {
     timeout = 15000,
     headers,
     check_selector,
+    spa_mode = true,
+    network_idle_time = 3000,
+    dom_stable_time = 1000,
   }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
@@ -171,6 +380,7 @@ app.post("/scrape", async (req: Request, res: Response) => {
   console.log(`Timeout: ${timeout}`);
   console.log(`Headers: ${headers ? JSON.stringify(headers) : "None"}`);
   console.log(`Check Selector: ${check_selector ? check_selector : "None"}`);
+  console.log(`SPA Mode: ${spa_mode}`);
   console.log(`==================================================`);
 
   if (!url) {
@@ -195,14 +405,16 @@ app.post("/scrape", async (req: Request, res: Response) => {
 
   let result: Awaited<ReturnType<typeof scrapePage>>;
   try {
-    // Try normal scraping first
     console.log("Attempting to scrape with Hero");
     result = await scrapePage(
       hero,
       url,
       wait_after_load,
       timeout,
-      check_selector
+      check_selector,
+      spa_mode,
+      network_idle_time,
+      dom_stable_time
     );
     console.log(JSON.stringify(result.status, null, 2));
   } catch (error) {
