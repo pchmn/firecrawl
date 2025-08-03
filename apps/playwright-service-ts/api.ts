@@ -75,15 +75,14 @@ const GENERIC_LOADING_SELECTORS = [
 ];
 
 const waitForSpaToLoad = async (hero: Hero, timeout: number) => {
-  console.log("🔄 Waiting for SPA loading indicators to disappear...");
+  console.log(
+    `🔄 Waiting for SPA loading indicators to disappear for ${timeout}ms...`
+  );
   const startTime = Date.now();
 
   try {
     console.log("⏳ Checking for loading indicators...");
     const loadingSelector = GENERIC_LOADING_SELECTORS.join(", ");
-
-    // Wait a bit for loading indicators to appear if they haven't yet
-    await hero.waitForMillis(500);
 
     // Check if any loading indicators exist
     const hasLoadingIndicators = await hero.document.querySelector(
@@ -94,19 +93,14 @@ const waitForSpaToLoad = async (hero: Hero, timeout: number) => {
       console.log(
         "⏳ Found loading indicators, waiting for them to disappear..."
       );
-      let attempts = 0;
-      const maxAttempts = Math.floor(timeout / 1000);
-
-      while (attempts < maxAttempts) {
-        // We keep await, even if the method is not async, because it's a promise
-        // https://ulixee.org/docs/hero/basic-client/awaited-dom
+      while (Date.now() - startTime < timeout) {
+        // Use actual elapsed time
         const stillLoading = await hero.document.querySelector(loadingSelector);
         if (!stillLoading) {
           console.log("✅ Loading indicators disappeared");
           break;
         }
         await hero.waitForMillis(1000);
-        attempts++;
       }
     } else {
       console.log("ℹ️ No loading indicators found");
@@ -134,11 +128,16 @@ const scrapePage = async (
     `Navigating to ${url} with timeout: ${timeout}ms, spaMode: ${spaMode}`
   );
 
+  const startTime = Date.now();
   const resource = await hero.goto(url, { timeoutMs: timeout });
 
   // If SPA mode is enabled, wait for loading indicators to disappear
   if (spaMode) {
-    await waitForSpaToLoad(hero, timeout);
+    const elapsedTime = Date.now() - startTime;
+    const remainingTimeout = timeout - elapsedTime;
+    if (remainingTimeout > 0) {
+      await waitForSpaToLoad(hero, remainingTimeout);
+    }
   }
 
   if (waitAfterLoad > 0) {
@@ -231,7 +230,7 @@ app.post("/scrape", async (req: Request, res: Response) => {
   const {
     url,
     wait_after_load = 0,
-    timeout = 15000,
+    timeout = 20000,
     headers,
     check_selector,
     spa_mode = true,
