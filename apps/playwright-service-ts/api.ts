@@ -117,6 +117,8 @@ const getHeroOptions = () => {
     viewport,
     blockedResourceTypes: BLOCK_MEDIA ? ["BlockMedia"] : undefined,
     blockedResourceUrls: AD_SERVING_DOMAINS.map((domain) => `*${domain}*`),
+    noChromeSandbox: true,
+    showChromeInteractions: true,
   };
 
   if (PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD) {
