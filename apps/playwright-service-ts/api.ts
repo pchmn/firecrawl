@@ -72,7 +72,11 @@ const scrapePage = async (
 
   const elapsedTime = Date.now() - startTime;
   const remainingTimeout = timeout - elapsedTime;
-  await hero.waitForPaintingStable({ timeoutMs: remainingTimeout });
+  try {
+    await hero.waitForPaintingStable({ timeoutMs: remainingTimeout });
+  } catch (error: any) {
+    console.log("Painting stable check failed:", error.message);
+  }
 
   if (waitAfterLoad > 0) {
     await hero.waitForMillis(waitAfterLoad);
@@ -149,7 +153,11 @@ const isValidUrl = (urlString: string): boolean => {
 
 app.get("/health", async (req: Request, res: Response) => {
   try {
-    const hero = new Hero({ ...getHeroOptions(), connectionToCore });
+    const hero = new Hero({
+      ...getHeroOptions(),
+      showChrome: false,
+      connectionToCore,
+    });
     await hero.goto("about:blank");
     await hero.close();
 
