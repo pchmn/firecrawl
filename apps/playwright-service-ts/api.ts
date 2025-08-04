@@ -58,87 +58,21 @@ interface UrlModel {
   spa_mode?: boolean;
 }
 
-// Generic loading indicators that work across most websites
-const GENERIC_LOADING_SELECTORS = [
-  '[class*="loading"]',
-  '[class*="spinner"]',
-  '[class*="loader"]',
-  '[id*="loading"]',
-  '[id*="spinner"]',
-  '[id*="loader"]',
-  '[data-testid*="loading"]',
-  '[data-testid*="spinner"]',
-  ".sk-circle", // Common CSS spinner
-  ".sk-cube-grid", // Common CSS spinner
-  ".fa-spinner", // FontAwesome spinner
-  ".fa-circle-o-notch", // FontAwesome spinner
-];
-
-const waitForSpaToLoad = async (hero: Hero, timeout: number) => {
-  console.log(
-    `🔄 Waiting for SPA loading indicators to disappear for ${timeout}ms...`
-  );
-  const startTime = Date.now();
-
-  try {
-    console.log("⏳ Checking for loading indicators...");
-    const loadingSelector = GENERIC_LOADING_SELECTORS.join(", ");
-
-    // Check if any loading indicators exist
-    const hasLoadingIndicators = await hero.document.querySelector(
-      loadingSelector
-    );
-
-    if (hasLoadingIndicators) {
-      console.log(
-        "⏳ Found loading indicators, waiting for them to disappear..."
-      );
-      while (Date.now() - startTime < timeout) {
-        // Use actual elapsed time
-        const stillLoading = await hero.document.querySelector(loadingSelector);
-        if (!stillLoading) {
-          console.log("✅ Loading indicators disappeared");
-          break;
-        }
-        await hero.waitForMillis(1000);
-      }
-    } else {
-      console.log("ℹ️ No loading indicators found");
-    }
-  } catch (error) {
-    console.log(
-      "ℹ️ Loading indicator check failed or timeout reached:",
-      error instanceof Error ? error.message : "Unknown error occurred"
-    );
-  }
-
-  const totalWaitTime = Date.now() - startTime;
-  console.log(`✅ SPA loading complete (waited ${totalWaitTime}ms)`);
-};
-
 const scrapePage = async (
   hero: Hero,
   url: string,
   waitAfterLoad: number,
   timeout: number,
-  checkSelector: string | undefined,
-  spaMode: boolean = false
+  checkSelector: string | undefined
 ) => {
-  console.log(
-    `Navigating to ${url} with timeout: ${timeout}ms, spaMode: ${spaMode}`
-  );
+  console.log(`Navigating to ${url}`);
 
   const startTime = Date.now();
   const resource = await hero.goto(url, { timeoutMs: timeout });
 
-  // If SPA mode is enabled, wait for loading indicators to disappear
-  if (spaMode) {
-    const elapsedTime = Date.now() - startTime;
-    const remainingTimeout = timeout - elapsedTime;
-    if (remainingTimeout > 0) {
-      await waitForSpaToLoad(hero, remainingTimeout);
-    }
-  }
+  const elapsedTime = Date.now() - startTime;
+  const remainingTimeout = timeout - elapsedTime;
+  await hero.waitForPaintingStable({ timeoutMs: remainingTimeout });
 
   if (waitAfterLoad > 0) {
     await hero.waitForMillis(waitAfterLoad);
@@ -146,8 +80,10 @@ const scrapePage = async (
 
   if (checkSelector) {
     try {
+      const elapsedTime = Date.now() - startTime;
+      const remainingTimeout = timeout - elapsedTime;
       await hero.waitForElement(hero.document.querySelector(checkSelector), {
-        timeoutMs: timeout,
+        timeoutMs: remainingTimeout,
       });
     } catch (error) {
       throw new Error("Required selector not found");
@@ -164,6 +100,7 @@ const scrapePage = async (
     status,
     headers: responseHeaders,
     contentType,
+    elapsedTime: Date.now() - startTime,
   };
 };
 
@@ -227,13 +164,14 @@ app.get("/health", async (req: Request, res: Response) => {
 });
 
 app.post("/scrape", async (req: Request, res: Response) => {
+  const startTime = Date.now();
+
   const {
     url,
     wait_after_load = 0,
-    timeout = 20000,
+    timeout = 15000,
     headers,
     check_selector,
-    spa_mode = true,
   }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
@@ -242,7 +180,6 @@ app.post("/scrape", async (req: Request, res: Response) => {
   console.log(`Timeout: ${timeout}`);
   console.log(`Headers: ${headers ? JSON.stringify(headers) : "None"}`);
   console.log(`Check Selector: ${check_selector ? check_selector : "None"}`);
-  console.log(`SPA Mode: ${spa_mode}`);
   console.log(`==================================================`);
 
   if (!url) {
@@ -273,8 +210,7 @@ app.post("/scrape", async (req: Request, res: Response) => {
       url,
       wait_after_load,
       timeout,
-      check_selector,
-      spa_mode
+      check_selector
     );
     console.log(JSON.stringify(result.status, null, 2));
   } catch (error) {
@@ -288,7 +224,7 @@ app.post("/scrape", async (req: Request, res: Response) => {
   const pageError = result.status !== 200 ? getError(result.status) : undefined;
 
   if (!pageError) {
-    console.log(`✅ Scrape successful!`);
+    console.log(`✅ Scrape successful! (${Date.now() - startTime}ms)`);
   } else {
     console.log(
       `🚨 Scrape failed with status code: ${result.status} ${pageError}`
