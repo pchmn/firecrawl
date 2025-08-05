@@ -21,7 +21,7 @@ const port = process.env.PORT || 3003;
 app.use(bodyParser.json());
 
 const BLOCK_MEDIA =
-  (process.env.BLOCK_MEDIA || "False").toUpperCase() === "TRUE";
+  (process.env.BLOCK_MEDIA || "false").toLowerCase() === "true";
 
 const PROXY_SERVER = process.env.PROXY_SERVER || null;
 const PROXY_USERNAME = process.env.PROXY_USERNAME || null;
@@ -55,7 +55,7 @@ interface UrlModel {
   timeout?: number;
   headers?: { [key: string]: string };
   check_selector?: string;
-  spa_mode?: boolean;
+  block_media?: boolean;
 }
 
 const scrapePage = async (
@@ -182,6 +182,7 @@ app.post("/scrape", async (req: Request, res: Response) => {
     timeout = 15000,
     headers,
     check_selector,
+    block_media = BLOCK_MEDIA,
   }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
@@ -190,6 +191,7 @@ app.post("/scrape", async (req: Request, res: Response) => {
   console.log(`Timeout: ${timeout}`);
   console.log(`Headers: ${headers ? JSON.stringify(headers) : "None"}`);
   console.log(`Check Selector: ${check_selector ? check_selector : "None"}`);
+  console.log(`Block Media: ${block_media}`);
   console.log(`==================================================`);
 
   if (!url) {
@@ -209,6 +211,9 @@ app.post("/scrape", async (req: Request, res: Response) => {
   const heroOptions = getHeroOptions();
   if (headers && headers["User-Agent"]) {
     heroOptions.userAgent = headers["User-Agent"];
+  }
+  if (block_media) {
+    heroOptions.blockedResourceTypes = ["All"];
   }
   const hero = new Hero({ ...heroOptions, connectionToCore });
 
