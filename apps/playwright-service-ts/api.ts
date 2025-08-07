@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import express, { Request, Response } from "express";
 import UserAgent from "user-agents";
 import { getError } from "./helpers/get_error";
+import { retry } from "./helpers/retry";
 
 dotenv.config();
 
@@ -220,12 +221,21 @@ app.post("/scrape", async (req: Request, res: Response) => {
   let result: Awaited<ReturnType<typeof scrapePage>>;
   try {
     console.log("Attempting to scrape with Hero");
-    result = await scrapePage(
-      hero,
-      url,
-      wait_after_load,
-      timeout,
-      check_selector
+    result = await retry(
+      ({ remainingTimeout }) =>
+        scrapePage(
+          hero,
+          url,
+          wait_after_load,
+          remainingTimeout,
+          check_selector
+        ),
+      {
+        maxRetry: 3,
+        retryInterval: 500,
+        functionName: "scrapePage",
+        timeout,
+      }
     );
     console.log(JSON.stringify(result.status, null, 2));
   } catch (error) {
