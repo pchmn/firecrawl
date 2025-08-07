@@ -110,11 +110,10 @@ const scrapePage = async (
 };
 
 const getHeroOptions = () => {
-  const userAgent = new UserAgent().toString();
   const viewport = { width: 1280, height: 800 };
 
   const options: IHeroCreateOptions = {
-    userAgent,
+    userAgent: new UserAgent().toString(),
     viewport,
     blockedResourceTypes: BLOCK_MEDIA ? ["BlockMedia"] : undefined,
     blockedResourceUrls: AD_SERVING_DOMAINS.map((domain) => `*${domain}*`),
@@ -217,6 +216,8 @@ app.post("/scrape", async (req: Request, res: Response) => {
     heroOptions.blockedResourceTypes = ["All"];
   }
   const hero = new Hero({ ...heroOptions, connectionToCore });
+  const metadata = await hero.meta;
+  console.log("User-Agent:", metadata.userAgentString);
 
   let result: Awaited<ReturnType<typeof scrapePage>>;
   try {
