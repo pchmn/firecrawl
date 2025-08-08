@@ -89,8 +89,8 @@ const scrapePage = async (
   checkSelector: string | undefined
 ) => {
   console.log(`Navigating to ${url}`);
-
   const startTime = Date.now();
+
   const hero = createHero(heroOptions);
   const metadata = await hero.meta;
   console.log("User-Agent:", metadata.userAgentString);
@@ -99,7 +99,8 @@ const scrapePage = async (
     const resource = await hero.goto(url, { timeoutMs: timeout });
 
     const elapsedTime = Date.now() - startTime;
-    const remainingTimeout = timeout - elapsedTime;
+    // Safe margin of 300ms, so outerHtml has time to execute
+    const remainingTimeout = timeout - elapsedTime - 300;
     try {
       await hero.waitForPaintingStable({ timeoutMs: remainingTimeout });
     } catch (error: any) {
@@ -113,7 +114,8 @@ const scrapePage = async (
     if (checkSelector) {
       try {
         const elapsedTime = Date.now() - startTime;
-        const remainingTimeout = timeout - elapsedTime;
+        // Safe margin of 300ms, so outerHtml has time to load
+        const remainingTimeout = timeout - elapsedTime - 300;
         await hero.waitForElement(hero.document.querySelector(checkSelector), {
           timeoutMs: remainingTimeout,
         });
@@ -151,6 +153,7 @@ const detectBrowserUnsupported = (html: string) => {
   const patterns = [
     "unsupported browser",
     "browser is no longer supported",
+    "please switch to a supported browser",
     "your browser is outdated",
     "please update your browser",
     "browser version not supported",
@@ -298,7 +301,7 @@ app.post("/scrape", async (req: Request, res: Response) => {
         maxRetry: 3,
         retryInterval: 500,
         functionName: "scrapePage",
-        timeout,
+        timeout: timeout - (Date.now() - startTime),
         onError(error) {
           console.log("Error:", error.message);
           if (error.message === "unsupported_browser") {
