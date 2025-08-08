@@ -3,6 +3,7 @@ interface RetryConfig {
   retryInterval: number;
   timeout: number;
   functionName: string;
+  onError?: (error: any) => void;
 }
 
 export const retry = async <T>(
@@ -12,7 +13,7 @@ export const retry = async <T>(
   remainingTimeout = config.timeout
 ): Promise<T> => {
   const startTime = Date.now();
-  const { maxRetry, retryInterval, functionName } = config;
+  const { maxRetry, retryInterval, functionName, onError } = config;
 
   try {
     const res = await fn({ remainingTimeout });
@@ -26,6 +27,7 @@ export const retry = async <T>(
         }`
       );
     }
+    onError?.(error);
     await new Promise((resolve) => setTimeout(resolve, retryInterval));
     console.log(`Retrying ${fn.name}...`);
     return retry(

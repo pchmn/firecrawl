@@ -7,6 +7,7 @@ import express, { Request, Response } from "express";
 import UserAgent from "user-agents";
 import { getError } from "./helpers/get_error";
 import { retry } from "./helpers/retry";
+import { getRandomUserAgent } from "./recent_user_agents";
 
 dotenv.config();
 
@@ -59,8 +60,29 @@ interface UrlModel {
   block_media?: boolean;
 }
 
+type CreateHeroOptions = {
+  userAgent?: string;
+  blockMedia?: boolean;
+};
+
+const createHero = ({ userAgent, blockMedia }: CreateHeroOptions) => {
+  const heroOptions = getHeroOptions();
+  if (userAgent) {
+    heroOptions.userAgent = userAgent;
+  }
+  if (blockMedia) {
+    heroOptions.blockedResourceTypes = [
+      "BlockImages",
+      "BlockFonts",
+      "BlockIcons",
+      "BlockMedia",
+    ];
+  }
+  return new Hero({ ...heroOptions, connectionToCore });
+};
+
 const scrapePage = async (
-  hero: Hero,
+  heroOptions: CreateHeroOptions,
   url: string,
   waitAfterLoad: number,
   timeout: number,
@@ -69,44 +91,90 @@ const scrapePage = async (
   console.log(`Navigating to ${url}`);
 
   const startTime = Date.now();
-  const resource = await hero.goto(url, { timeoutMs: timeout });
+  const hero = createHero(heroOptions);
+  const metadata = await hero.meta;
+  console.log("User-Agent:", metadata.userAgentString);
 
-  const elapsedTime = Date.now() - startTime;
-  const remainingTimeout = timeout - elapsedTime;
   try {
-    await hero.waitForPaintingStable({ timeoutMs: remainingTimeout });
-  } catch (error: any) {
-    console.log("Painting stable check failed:", error.message);
-  }
+    const resource = await hero.goto(url, { timeoutMs: timeout });
 
-  if (waitAfterLoad > 0) {
-    await hero.waitForMillis(waitAfterLoad);
-  }
-
-  if (checkSelector) {
+    const elapsedTime = Date.now() - startTime;
+    const remainingTimeout = timeout - elapsedTime;
     try {
-      const elapsedTime = Date.now() - startTime;
-      const remainingTimeout = timeout - elapsedTime;
-      await hero.waitForElement(hero.document.querySelector(checkSelector), {
-        timeoutMs: remainingTimeout,
-      });
-    } catch (error) {
-      throw new Error("Required selector not found");
+      await hero.waitForPaintingStable({ timeoutMs: remainingTimeout });
+    } catch (error: any) {
+      console.log("Painting stable check failed:", error.message);
     }
+
+    if (waitAfterLoad > 0) {
+      await hero.waitForMillis(waitAfterLoad);
+    }
+
+    if (checkSelector) {
+      try {
+        const elapsedTime = Date.now() - startTime;
+        const remainingTimeout = timeout - elapsedTime;
+        await hero.waitForElement(hero.document.querySelector(checkSelector), {
+          timeoutMs: remainingTimeout,
+        });
+      } catch (error) {
+        throw new Error("Required selector not found");
+      }
+    }
+
+    const content = await hero.document.documentElement.outerHTML;
+    const isBrowserUnsupported = detectBrowserUnsupported(content);
+    if (isBrowserUnsupported) {
+      throw new Error("unsupported_browser");
+    }
+
+    const status = resource?.response?.statusCode || null;
+    const responseHeaders = resource?.response?.headers || null;
+    const contentType = responseHeaders?.["content-type"] || null;
+
+    await hero.close();
+
+    return {
+      content,
+      status,
+      headers: responseHeaders,
+      contentType,
+      elapsedTime: Date.now() - startTime,
+    };
+  } catch (error) {
+    await hero.close();
+    throw error;
   }
+};
 
-  const content = await hero.document.documentElement.outerHTML;
-  const status = resource?.response?.statusCode || null;
-  const responseHeaders = resource?.response?.headers || null;
-  const contentType = responseHeaders?.["content-type"] || null;
+const detectBrowserUnsupported = (html: string) => {
+  const patterns = [
+    "unsupported browser",
+    "browser is no longer supported",
+    "your browser is outdated",
+    "please update your browser",
+    "browser version not supported",
+    "outdated browser",
+    "update your browser",
+    "browser not supported",
+    "incompatible browser",
+    "this browser is not supported",
+    "please upgrade your browser",
+    "browser too old",
+    "old browser detected",
+    "upgrade to a modern browser",
+    "internet explorer is not supported",
+    "ie is not supported",
+    "this site requires a modern browser",
+    "your browser does not support",
+    "browser compatibility issue",
+    "minimum browser version required",
+    "please use a supported browser",
+    "browser version too old",
+  ];
 
-  return {
-    content,
-    status,
-    headers: responseHeaders,
-    contentType,
-    elapsedTime: Date.now() - startTime,
-  };
+  const regex = new RegExp(patterns.join("|"), "i");
+  return regex.test(html);
 };
 
 const getHeroOptions = () => {
@@ -210,29 +278,17 @@ app.post("/scrape", async (req: Request, res: Response) => {
     );
   }
 
-  const heroOptions = getHeroOptions();
-  if (headers && headers["User-Agent"]) {
-    heroOptions.userAgent = headers["User-Agent"];
-  }
-  if (block_media) {
-    heroOptions.blockedResourceTypes = [
-      "BlockImages",
-      "BlockFonts",
-      "BlockIcons",
-      "BlockMedia",
-    ];
-  }
-  const hero = new Hero({ ...heroOptions, connectionToCore });
-  const metadata = await hero.meta;
-  console.log("User-Agent:", metadata.userAgentString);
-
+  let heroOptions: CreateHeroOptions = {
+    userAgent: headers?.["User-Agent"],
+    blockMedia: block_media,
+  };
   let result: Awaited<ReturnType<typeof scrapePage>>;
   try {
     console.log("Attempting to scrape with Hero");
     result = await retry(
       ({ remainingTimeout }) =>
         scrapePage(
-          hero,
+          heroOptions,
           url,
           wait_after_load,
           remainingTimeout,
@@ -243,12 +299,17 @@ app.post("/scrape", async (req: Request, res: Response) => {
         retryInterval: 500,
         functionName: "scrapePage",
         timeout,
+        onError(error) {
+          console.log("Error:", error.message);
+          if (error.message === "unsupported_browser") {
+            heroOptions.userAgent = getRandomUserAgent();
+          }
+        },
       }
     );
     console.log(JSON.stringify(result.status, null, 2));
   } catch (error) {
     console.log("Hero scraping failed:", error);
-    await hero.close();
     return res
       .status(500)
       .json({ error: "An error occurred while fetching the page." });
@@ -263,8 +324,6 @@ app.post("/scrape", async (req: Request, res: Response) => {
       `🚨 Scrape failed with status code: ${result.status} ${pageError}`
     );
   }
-
-  await hero.close();
 
   res.json({
     content: result.content,
