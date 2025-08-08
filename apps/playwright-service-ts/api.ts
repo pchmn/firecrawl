@@ -115,7 +115,9 @@ const getHeroOptions = () => {
   const options: IHeroCreateOptions = {
     userAgent: new UserAgent().toString(),
     viewport,
-    blockedResourceTypes: BLOCK_MEDIA ? ["BlockMedia"] : undefined,
+    blockedResourceTypes: BLOCK_MEDIA
+      ? ["BlockImages", "BlockFonts", "BlockIcons", "BlockMedia"]
+      : undefined,
     blockedResourceUrls: AD_SERVING_DOMAINS.map((domain) => `*${domain}*`),
     noChromeSandbox: true,
     showChromeInteractions: true,
@@ -213,7 +215,12 @@ app.post("/scrape", async (req: Request, res: Response) => {
     heroOptions.userAgent = headers["User-Agent"];
   }
   if (block_media) {
-    heroOptions.blockedResourceTypes = ["All"];
+    heroOptions.blockedResourceTypes = [
+      "BlockImages",
+      "BlockFonts",
+      "BlockIcons",
+      "BlockMedia",
+    ];
   }
   const hero = new Hero({ ...heroOptions, connectionToCore });
   const metadata = await hero.meta;
